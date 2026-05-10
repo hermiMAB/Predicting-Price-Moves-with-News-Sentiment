@@ -1,72 +1,68 @@
 import pandas as pd
 import talib
-import pynance as pn
-import quantstats as qs
-import logging
+import pynance as pn 
+import quantstats as qs 
+import logging 
 
-# Extend pandas with QuantStats methods for advanced reporting
-qs.extend_pandas()
+def prepare_data(df):
+    df = df.copy()
 
-def apply_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Calculates SMA, EMA, RSI, MACD using TA-Lib, 
-    alternative metrics using PyNance, and daily returns for QuantStats.
-    """
-    if df.empty or 'Close' not in df.columns:
-        logging.error("Cannot compute indicators: DataFrame is empty or missing 'Close'.")
-        return df
+    # Enforce timezone consistency to prevent QuantStats errors later
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'], utc=True)
+        df = df.sort_values('Date')
         
-    # Create a copy to prevent modifying the original dataframe
-    data = df.copy()
-    
-    # Ensure data is sorted chronologically before calculating indicators
-    if 'Date' in data.columns:
-        data = data.sort_values(by='Date')
-        
-    close_prices = data['Close']
-    
-    # --- 1. Moving Averages (TA-Lib) ---
-    data['SMA_20'] = talib.SMA(close_prices, timeperiod=20)
-    data['SMA_50'] = talib.SMA(close_prices, timeperiod=50)
-    data['EMA_20'] = talib.EMA(close_prices, timeperiod=20)
-    
-    # --- 2. RSI & MACD (TA-Lib) ---
-    data['RSI'] = talib.RSI(close_prices, timeperiod=14)
-    macd, macdsignal, macdhist = talib.MACD(
-        close_prices, fastperiod=12, slowperiod=26, signalperiod=9
+    # TA-Lib STRICTLY requires float64 types. This prevents silent crashes.
+    if 'Close' in df.columns:
+        df['Close'] = df['Close'].astype('float64')
+
+    return df
+
+def add_moving_averages(df):
+    df['SMA_20'] = talib.SMA(df['Close'], timeperiod=20)
+    df['SMA_50'] = talib.SMA(df['Close'], timeperiod=50)
+    df['EMA_20'] = talib.EMA(df['Close'], timeperiod=20)
+    return df
+
+def add_rsi(df):
+    df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
+    return df
+
+def add_macd(df):
+    macd, signal, hist = talib.MACD(
+        df['Close'],
+        fastperiod=12,
+        slowperiod=26,
+        signalperiod=9
     )
-    data['MACD'] = macd
-    data['MACD_Signal'] = macdsignal
-    data['MACD_Hist'] = macdhist
-    
-    # --- 3. Alternative Metrics (PyNance) ---
-    # Wrapped in a try-except block so it doesn't crash if PyNance throws a warning
+    df['MACD'] = macd
+    df['MACD_Signal'] = signal
+    df['MACD_Hist'] = hist
+    return df
+
+def add_financial_metrics(df):
+    df['Daily_Return'] = df['Close'].pct_change()
+
     try:
-        data['SMA_50_pn'] = pn.tech.sma(close_prices, window=50)
+        df['SMA_50_PyNance'] = pn.tech.sma(df['Close'], window=50)
     except Exception as e:
+        # Replaced print with proper logging
         logging.warning(f"PyNance calculation skipped: {e}")
 
-    # --- 4. Daily Returns (QuantStats & Task 3 Prep) ---
-    # Formula: (Close_t - Close_{t-1}) / Close_{t-1}
-    data['Daily_Return'] = close_prices.pct_change()
-    
-    logging.info("Technical indicators successfully applied.")
-    return data
+    return df
 
-def print_quantstats_summary(df: pd.DataFrame):
-    """
-    Prints a professional snapshot of Sharpe Ratio and Max Drawdown.
-    Ensures the index is datetime-compatible for QuantStats.
-    """
-    if 'Daily_Return' in df.columns:
-        # Create a temporary series with Date as the index
-        # QuantStats MUST have a DatetimeIndex to calculate Drawdown
+def print_performance_metrics(df):
+    # Safe check: Only set the index if 'Date' is an actual column and not already the index!
+    if 'Date' in df.columns:
         temp_df = df.set_index('Date')
-        returns = temp_df['Daily_Return'].dropna()
-        
-        print(f"Sharpe Ratio: {qs.stats.sharpe(returns):.2f}")
-        
-        # Now this will work because returns.index[0] is a Timestamp, not an Int
-        print(f"Max Drawdown: {qs.stats.max_drawdown(returns)*100:.2f}%")
     else:
-        print("Error: 'Daily_Return' column not found.")
+        temp_df = df.copy()
+        
+    # Dropna is crucial here so QuantStats doesn't trip on the first row
+    returns = temp_df['Daily_Return'].dropna()
+
+    sharpe = qs.stats.sharpe(returns)
+    drawdown = qs.stats.max_drawdown(returns)
+
+    print(f"Sharpe Ratio: {sharpe:.2f}")
+    print(f"Max Drawdown: {drawdown*100:.2f}%")
