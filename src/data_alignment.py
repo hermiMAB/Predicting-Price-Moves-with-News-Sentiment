@@ -111,4 +111,18 @@ def aggregate_daily_data(df):
     return daily_summary
 
 
+from scipy.stats import pearsonr
+def calculate_significance(df, name):
+    # Calculate pearson r and p-value
+    r_val, p_val = pearsonr(df['vader_compound'], df['Daily_Return'])
+    
+    print(f"--- {name} Significance Test ---")
+    print(f"Correlation (r): {r_val:.4f}")
+    print(f"P-value: {p_val:.4f}")
+    
+    if p_val < 0.05:
+        print(" Statistically Significant (We reject the null hypothesis)")
+    else:
+        print(" Not Statistically Significant (Relationship might be due to chance)")
+    print("-" * 30)
 
